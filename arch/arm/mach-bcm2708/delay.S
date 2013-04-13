@@ -1,3 +1,4 @@
+#if 0
 /*
  *  linux/arch/arm/lib/delay.S
  *
@@ -19,3 +20,4 @@ ENTRY(bcm2708_delay)
 		bhi	bcm2708_delay
 		mov	pc, lr
 ENDPROC(bcm2708_delay)
+#endif

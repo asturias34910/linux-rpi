@@ -160,14 +160,10 @@ static inline uint32_t timer_read(void)
 	return readl(__io_address(ST_BASE + 0x04));
 }
 
-#ifdef ARCH_HAS_READ_CURRENT_TIMER
-int read_current_timer(unsigned long *timer_val)
+static unsigned long bcm2708_read_current_timer(void)
 {
-	*timer_val = timer_read();
-	return 0;
+	return timer_read();
 }
-EXPORT_SYMBOL(read_current_timer);
-#endif
 
 static u32 notrace bcm2708_read_sched_clock(void)
 {
@@ -668,22 +664,22 @@ static void bcm2708_restart(char mode, const char *cmd)
 	uint32_t timeout = 10;
 
 	/* Setup watchdog for reset */
-	pm_rstc = readl(IO_ADDRESS(PM_RSTC));
+	pm_rstc = readl(__io_address(PM_RSTC));
 
 	pm_wdog = PM_PASSWORD | (timeout & PM_WDOG_TIME_SET); // watchdog timer = timer clock / 16; need password (31:16) + value (11:0)
 	pm_rstc = PM_PASSWORD | (pm_rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET;
 
-	writel(pm_wdog, IO_ADDRESS(PM_WDOG));
-	writel(pm_rstc, IO_ADDRESS(PM_RSTC));
+	writel(pm_wdog, __io_address(PM_WDOG));
+	writel(pm_rstc, __io_address(PM_RSTC));
 }
 
 /* We can't really power off, but if we do the normal reset scheme, and indicate to bootcode.bin not to reboot, then most of the chip will be powered off */
 static void bcm2708_power_off(void)
 {
 	/* we set the watchdog hard reset bit here to distinguish this reset from the normal (full) reset. bootcode.bin will not reboot after a hard reset */
-	uint32_t pm_rsts = readl(IO_ADDRESS(PM_RSTS));
+	uint32_t pm_rsts = readl(__io_address(PM_RSTS));
 	pm_rsts = PM_PASSWORD | (pm_rsts & PM_RSTC_WRCFG_CLR) | PM_RSTS_HADWRH_SET;
-	writel(pm_rsts, IO_ADDRESS(PM_RSTS));
+	writel(pm_rsts, __io_address(PM_RSTS));
 	/* continue with normal reset mechanism */
 	bcm2708_restart(0, "");
 }
@@ -753,8 +749,6 @@ void __init bcm2708_init(void)
 #endif
 }
 
-#define TIMER_PERIOD DIV_ROUND_CLOSEST(STC_FREQ_HZ, HZ)
-
 static void timer_set_mode(enum clock_event_mode mode,
 			   struct clock_event_device *clk)
 {
@@ -816,6 +810,12 @@ static struct irqaction bcm2708_timer_irq = {
 /*
  * Set up timer interrupt, and return the current time in seconds.
  */
+
+static struct delay_timer bcm2708_delay_timer = {
+	.read_current_timer = bcm2708_read_current_timer,
+	.freq = STC_FREQ_HZ,
+};
+
 static void __init bcm2708_timer_init(void)
 {
 	/* init high res timer */
@@ -841,6 +841,8 @@ static void __init bcm2708_timer_init(void)
 
 	timer0_clockevent.cpumask = cpumask_of(0);
 	clockevents_register_device(&timer0_clockevent);
+
+	register_current_timer_delay(&bcm2708_delay_timer);
 }
 
 struct sys_timer bcm2708_timer = {
@@ -881,38 +883,6 @@ static inline void bcm2708_init_led(void)
 {
 }
 #endif
-
-/* The assembly versions in delay.S don't account for core freq changing in cpufreq driver */
-/* Use 1MHz system timer for busy waiting */
-static void bcm2708_udelay(unsigned long usecs)
-{
-	unsigned long start = timer_read();
-	unsigned long now;
-	do {
-		now = timer_read();
-	} while ((long)(now - start) <= usecs);
-}
-
-
-static void bcm2708_const_udelay(unsigned long scaled_usecs)
-{
-	/* want /107374, this is about 3% bigger. We know usecs is less than 2000, so shouldn't overflow */
-	const unsigned long usecs = scaled_usecs * 10 >> 20;
-	unsigned long start = timer_read();
-	unsigned long now;
-	do {
-		now = timer_read();
-	} while ((long)(now - start) <= usecs);
-}
-
-extern void bcm2708_delay(unsigned long cycles);
-
-struct arm_delay_ops arm_delay_ops = {
-	.delay		= bcm2708_delay,
-	.const_udelay	= bcm2708_const_udelay,
-	.udelay		= bcm2708_udelay,
-};
-
 
 void __init bcm2708_init_early(void)
 {
